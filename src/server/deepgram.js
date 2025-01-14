@@ -6,11 +6,9 @@ class DeepgramService {
             throw new Error('Deepgram API key is required');
         }
         this.deepgram = createClient(apiKey);
-        this.lastTranscript = '';
         this.reconnectTimeout = null;
-        this.currentUtterance = '';
-        this.lastInterimTime = 0;
-        this.processedTimestamps = new Set();
+        this.keepAliveInterval = null;
+        this.isClosing = false;
     }
 
     async createLiveTranscription(socket) {
@@ -25,17 +23,16 @@ class DeepgramService {
                 smart_format: true,
                 interim_results: true,
                 punctuate: true,
-                endpointing: 500,
-                vad_events: true,
-                utterance_end_ms: 1000
+                endpointing: 500
             });
+
+            // Setup keep-alive as soon as connection is created
+            this.setupKeepAlive(connection);
 
             connection.addListener('open', () => {
                 console.log('Deepgram connection established');
                 socket.emit('connectionStatus', 'Connected to Deepgram');
-                clearTimeout(this.reconnectTimeout);
-                this.currentUtterance = '';
-                this.processedTimestamps.clear();
+                this.isClosing = false;
             });
 
             connection.addListener('Results', (data) => {
@@ -44,100 +41,65 @@ class DeepgramService {
                 const transcript = data.channel.alternatives[0].transcript.trim();
                 if (!transcript) return;
 
-                const segmentId = `${data.start}-${data.end}-${transcript}`;
-                if (this.processedTimestamps.has(segmentId)) {
-                    return;
-                }
-
-                const now = Date.now();
                 const isFinal = data.is_final || data.speech_final;
-                
-                if (!isFinal && now - this.lastInterimTime < 250) {
-                    return;
-                }
+                console.log(`Received ${isFinal ? 'final' : 'interim'} transcript:`, transcript);
 
-                if (this.isNewOrUpdatedTranscript(transcript, isFinal)) {
-                    console.log(`Emitting ${isFinal ? 'final' : 'interim'} transcript:`, transcript);
-                    
-                    if (isFinal) {
-                        this.lastTranscript = transcript;
-                        this.currentUtterance = '';
-                        this.processedTimestamps.add(segmentId);
-                    } else {
-                        this.currentUtterance = transcript;
-                        this.lastInterimTime = now;
-                    }
-
-                    socket.emit('transcription', { 
-                        transcript,
-                        isFinal,
-                        speechFinal: data.speech_final,
-                        start: data.start,
-                        end: data.end
-                    });
-                }
+                socket.emit('transcription', { 
+                    transcript,
+                    isFinal,
+                    speechFinal: data.speech_final,
+                    start: data.start,
+                    end: data.end
+                });
             });
 
-            let lastSpeechStart = 0;
-            connection.addListener('SpeechStarted', (data) => {
-                const now = Date.now();
-                if (now - lastSpeechStart > 1000) {
-                    console.log('Speech started:', data);
-                    socket.emit('speechStarted', data);
-                    lastSpeechStart = now;
+            connection.addListener('Error', (error) => {
+                console.error('Deepgram error:', error);
+                if (!this.isClosing) {
+                    this.handleReconnection(socket);
                 }
-            });
-
-            connection.addListener('UtteranceEnd', (data) => {
-                console.log('Utterance ended:', data);
-                socket.emit('utteranceEnd', data);
-                
-                connection.send(JSON.stringify({ type: "Finalize" }));
             });
 
             connection.addListener('Close', () => {
                 console.log('Deepgram connection closed');
-                socket.emit('connectionStatus', 'Disconnected from Deepgram');
-                this.handleReconnection(socket);
+                if (!this.isClosing) {
+                    socket.emit('connectionStatus', 'Disconnected from Deepgram');
+                    this.handleReconnection(socket);
+                }
             });
 
             return connection;
         } catch (error) {
             console.error('Error creating Deepgram connection:', error);
-            if (error.message.includes('API key')) {
-                socket.emit('error', 'Invalid or missing API key');
-            } else {
-                this.handleReconnection(socket);
-            }
             throw error;
         }
     }
 
-    isNewOrUpdatedTranscript(newTranscript, isFinal) {
-        if (isFinal) {
-            return true;
+    setupKeepAlive(connection) {
+        if (this.keepAliveInterval) {
+            clearInterval(this.keepAliveInterval);
         }
 
-        if (newTranscript !== this.currentUtterance) {
-            if (this.lastTranscript) {
-                const similarity = this.calculateSimilarity(this.lastTranscript, newTranscript);
-                return similarity < 0.9;
+        // Send keep-alive every 5 seconds (half of the 10-second timeout)
+        this.keepAliveInterval = setInterval(() => {
+            if (connection.getReadyState() === 1) {
+                try {
+                    // Send KeepAlive message as text
+                    connection.send(JSON.stringify({ type: "KeepAlive" }));
+                    console.log('Keep-alive sent');
+                } catch (error) {
+                    console.error('Error sending keep-alive:', error);
+                    this.handleReconnection(socket);
+                }
             }
-            return true;
-        }
-
-        return false;
-    }
-
-    calculateSimilarity(str1, str2) {
-        const words1 = str1.toLowerCase().split(' ');
-        const words2 = str2.toLowerCase().split(' ');
-        const intersection = words1.filter(word => words2.includes(word));
-        return intersection.length / Math.max(words1.length, words2.length);
+        }, 5000);
     }
 
     handleReconnection(socket) {
+        if (this.isClosing) return;
+
         clearTimeout(this.reconnectTimeout);
+        clearInterval(this.keepAliveInterval);
         
         this.reconnectTimeout = setTimeout(async () => {
             try {
@@ -147,7 +109,13 @@ class DeepgramService {
                 console.error('Reconnection failed:', error);
                 socket.emit('error', 'Failed to reconnect to transcription service');
             }
-        }, 2000);
+        }, 1000);
+    }
+
+    cleanup() {
+        this.isClosing = true;
+        clearInterval(this.keepAliveInterval);
+        clearTimeout(this.reconnectTimeout);
     }
 }
 

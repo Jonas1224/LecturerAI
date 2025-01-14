@@ -52,7 +52,6 @@ io.on('connection', (socket) => {
             if (!deepgramLive) {
                 try {
                     deepgramLive = await deepgramService.createLiveTranscription(socket);
-                    // Wait for connection to be ready
                     await new Promise((resolve, reject) => {
                         const timeout = setTimeout(() => {
                             reject(new Error('Connection timeout'));
@@ -82,7 +81,7 @@ io.on('connection', (socket) => {
         } catch (error) {
             console.error('Error sending data to Deepgram:', error);
             if (deepgramLive.getReadyState() === 3) {
-                deepgramLive = null; // Reset the connection
+                deepgramLive = null;
                 socket.emit('connectionStatus', 'Reconnecting...');
                 socket.emit('startTranscription');
             }
@@ -91,13 +90,16 @@ io.on('connection', (socket) => {
 
     socket.on('stopTranscription', () => {
         if (deepgramLive) {
+            deepgramService.cleanup();
             deepgramLive.finish();
+            deepgramLive = null;
         }
     });
 
     socket.on('disconnect', () => {
         console.log('Client disconnected');
         if (deepgramLive) {
+            deepgramService.cleanup();
             deepgramLive.finish();
             deepgramLive = null;
         }
