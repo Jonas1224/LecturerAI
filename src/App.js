@@ -22,34 +22,66 @@ function App() {
         socket.on('transcription', (data) => {
             console.log('Received transcription:', data);
             setTranscription(prev => {
-                const lines = prev.split('\n').filter(line => !line.startsWith('[interim]'));
-                const finalText = lines.join('\n').trim();  // Changed to \n
+                const [transcriptLine, translationLine] = prev.split('\n');
+                const currentTranscript = transcriptLine?.replace(/\[interim\].*$/, '').trim() || '';
+                const currentTranslation = translationLine?.startsWith('    ') ? translationLine : '';
 
                 if (data.isFinal || data.speechFinal) {
                     let newText = data.transcript;
                     if (!/[.!?]$/.test(newText)) {
                         newText += '.';
                     }
-                    return finalText ? `${finalText}\n${newText}` : newText;  // Added \n
+                    
+                    // Append new text to transcript line
+                    const updatedTranscript = currentTranscript 
+                        ? `${currentTranscript} ${newText}`
+                        : newText;
+                    
+                    // Keep existing translation
+                    return currentTranslation 
+                        ? `${updatedTranscript}\n${currentTranslation}`
+                        : updatedTranscript;
                 }
                 
-                return finalText ? `${finalText}\n[interim] ${data.transcript}` : `[interim] ${data.transcript}`;
+                // For interim results
+                const interimLine = currentTranscript 
+                    ? `${currentTranscript} [interim] ${data.transcript}`
+                    : `[interim] ${data.transcript}`;
+                
+                return currentTranslation 
+                    ? `${interimLine}\n${currentTranslation}`
+                    : interimLine;
             });
         });
 
         socket.on('translation', (data) => {
             console.log('Received translation:', data);
             setTranscription(prev => {
-                const lines = prev.split('\n').filter(line => !line.startsWith('[interim]'));
-                const finalText = lines.join('\n').trim();  // Changed to \n
+                const [transcriptLine, translationLine] = prev.split('\n');
+                const currentTranscript = transcriptLine?.replace(/\[interim\].*$/, '').trim() || '';
+                const currentTranslation = translationLine?.startsWith('    ') 
+                    ? translationLine.substring(4) // Remove indentation for appending
+                    : '';
 
                 if (data.isFinal) {
-                    const translation = `    ${data.translation}`;  // Added indentation
-                    return finalText ? `${finalText}\n${translation}` : translation;  // Added \n
+                    // Append new translation to existing translation
+                    const updatedTranslation = currentTranslation
+                        ? `    ${currentTranslation} ${data.translation}`
+                        : `    ${data.translation}`;
+                    
+                    return currentTranscript 
+                        ? `${currentTranscript}\n${updatedTranslation}`
+                        : updatedTranslation;
                 }
                 
-                const interimTranslation = `    [interim] ${data.translation}`;  // Added indentation
-                return finalText ? `${finalText}\n${interimTranslation}` : interimTranslation;
+                // For interim translations
+                const interimTranslation = currentTranslation
+                    ? `    ${currentTranslation} [interim] ${data.translation}`
+                    : `    [interim] ${data.translation}`;
+                
+                return currentTranscript 
+                    ? `${currentTranscript}\n${interimTranslation}`
+                    : interimTranslation;
             });
         });
 
