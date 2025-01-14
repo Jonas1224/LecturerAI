@@ -1,14 +1,87 @@
-const { createClient } = require('@deepgram/sdk');
+const { createClient: createDeepgramClient } = require('@deepgram/sdk');
+const { OpenAI } = require('openai');
 
 class DeepgramService {
-    constructor(apiKey) {
+    constructor(apiKey, deepseekApiKey) {
         if (!apiKey) {
             throw new Error('Deepgram API key is required');
         }
-        this.deepgram = createClient(apiKey);
+        if (!deepseekApiKey) {
+            throw new Error('Deepseek API key is required');
+        }
+        this.deepgram = createDeepgramClient(apiKey);
+        this.deepseek = new OpenAI({
+            apiKey: deepseekApiKey,
+            baseURL: 'https://api.deepseek.com/v1'
+        });
         this.reconnectTimeout = null;
         this.keepAliveInterval = null;
         this.isClosing = false;
+        this.targetLanguage = 'original';
+        this.translationContext = new Map(); // Store context for each language
+    }
+
+    async translate(text, targetLanguage) {
+        if (targetLanguage === 'original') return null;
+
+        console.log(`Attempting to translate to ${targetLanguage}:`, text);
+
+        const languageNames = {
+            'zh': 'Chinese',
+            'ja': 'Japanese'
+        };
+
+        const context = this.translationContext.get(targetLanguage) || [];
+        
+        try {
+            const messages = [
+                {
+                    role: "system",
+                    content: `You are a professional translator. Translate the given English text to ${languageNames[targetLanguage]}. 
+                    Keep the translation natural and contextually accurate. Only respond with the translation, no explanations.`
+                },
+                ...context,
+                { role: "user", content: text }
+            ];
+
+            console.log('Sending translation request to Deepseek:', {
+                model: "deepseek-chat",
+                messages: messages.length,
+                temperature: 0.3
+            });
+
+            const response = await this.deepseek.chat.completions.create({
+                model: "deepseek-chat",
+                messages: messages,
+                temperature: 0.3,
+                max_tokens: 1000
+            });
+
+            const translation = response.choices[0].message.content.trim();
+            console.log('Received translation:', translation);
+
+            // Update context with the latest pair
+            context.push(
+                { role: "user", content: text },
+                { role: "assistant", content: translation }
+            );
+
+            while (context.length > 8) {
+                context.shift();
+            }
+
+            this.translationContext.set(targetLanguage, context);
+
+            return translation;
+        } catch (error) {
+            console.error('Translation error:', error);
+            return null;
+        }
+    }
+
+    setTargetLanguage(language) {
+        console.log('Setting target language to:', language);
+        this.targetLanguage = language;
     }
 
     async createLiveTranscription(socket) {
@@ -26,7 +99,6 @@ class DeepgramService {
                 endpointing: 500
             });
 
-            // Setup keep-alive as soon as connection is created
             this.setupKeepAlive(connection);
 
             connection.addListener('open', () => {
@@ -35,7 +107,7 @@ class DeepgramService {
                 this.isClosing = false;
             });
 
-            connection.addListener('Results', (data) => {
+            connection.addListener('Results', async (data) => {
                 if (!data?.channel?.alternatives?.[0]?.transcript) return;
                 
                 const transcript = data.channel.alternatives[0].transcript.trim();
@@ -43,7 +115,9 @@ class DeepgramService {
 
                 const isFinal = data.is_final || data.speech_final;
                 console.log(`Received ${isFinal ? 'final' : 'interim'} transcript:`, transcript);
+                console.log('Current target language:', this.targetLanguage);
 
+                // Emit original transcription
                 socket.emit('transcription', { 
                     transcript,
                     isFinal,
@@ -51,6 +125,20 @@ class DeepgramService {
                     start: data.start,
                     end: data.end
                 });
+
+                // Handle translation if needed
+                if (this.targetLanguage !== 'original' && isFinal) {
+                    console.log('Starting translation process...');
+                    const translation = await this.translate(transcript, this.targetLanguage);
+                    console.log('Translation result:', translation);
+                    if (translation) {
+                        console.log('Emitting translation to client');
+                        socket.emit('translation', {
+                            translation,
+                            isFinal: true
+                        });
+                    }
+                }
             });
 
             connection.addListener('Error', (error) => {

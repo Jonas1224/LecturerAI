@@ -25,6 +25,32 @@ button.recording {
     background-color: #dc3545;
 }
 
+.error-message {
+    color: #dc3545;
+    margin: 10px 0;
+}
+
+.transcription-container {
+    margin-top: 20px;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.status-bar {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 10px;
+}
+
+.transcription-text {
+    min-height: 100px;
+    text-align: left;
+    white-space: pre-wrap;
+    font-size: 16px;
+    line-height: 1.5;
+}
+
 .controls {
     display: flex;
     gap: 20px;
@@ -76,8 +102,6 @@ button.recording {
     border: 1px solid #ddd;
     border-radius: 4px;
     background-color: white;
-    text-align: left;
-    white-space: pre-wrap;
 }
 
 .status {
@@ -92,4 +116,4 @@ button.recording {
     padding: 10px;
     background-color: #ffe6e6;
     border-radius: 4px;
-}
+} 

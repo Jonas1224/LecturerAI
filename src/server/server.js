@@ -17,16 +17,19 @@ const io = new Server(server, {
 app.use(cors());
 
 // Verify API key exists
-if (!process.env.DEEPGRAM_API_KEY) {
-    console.error('DEEPGRAM_API_KEY is not set in environment variables');
+if (!process.env.DEEPGRAM_API_KEY || !process.env.DEEPSEEK_API_KEY) {
+    console.error('DEEPGRAM_API_KEY or DEEPSEEK_API_KEY is not set in environment variables');
     process.exit(1);
 }
 
 let deepgramService;
 try {
-    deepgramService = new DeepgramService(process.env.DEEPGRAM_API_KEY);
+    deepgramService = new DeepgramService(
+        process.env.DEEPGRAM_API_KEY,
+        process.env.DEEPSEEK_API_KEY
+    );
 } catch (error) {
-    console.error('Failed to initialize Deepgram service:', error);
+    console.error('Failed to initialize services:', error);
     process.exit(1);
 }
 
@@ -34,17 +37,24 @@ io.on('connection', (socket) => {
     console.log('Client connected');
     let deepgramLive;
 
-    socket.on('startTranscription', async () => {
+    socket.on('startTranscription', async (data = {}) => {
         try {
+            console.log('Starting transcription with data:', data);
             if (deepgramLive) {
                 deepgramLive.finish();
-                await new Promise(resolve => setTimeout(resolve, 500)); // Wait for connection to close
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
+            deepgramService.setTargetLanguage(data.targetLanguage || 'original');
             deepgramLive = await deepgramService.createLiveTranscription(socket);
         } catch (error) {
             console.error('Failed to start transcription:', error);
             socket.emit('error', 'Failed to start transcription. Please try again.');
         }
+    });
+
+    socket.on('changeLanguage', ({ targetLanguage }) => {
+        console.log('Received language change request:', targetLanguage);
+        deepgramService.setTargetLanguage(targetLanguage);
     });
 
     socket.on('audioData', async (data) => {

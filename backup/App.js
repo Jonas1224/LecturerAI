@@ -23,14 +23,14 @@ function App() {
             console.log('Received transcription:', data);
             setTranscription(prev => {
                 const lines = prev.split('\n').filter(line => !line.startsWith('[interim]'));
-                const finalText = lines.join('\n').trim();  // Changed to \n
+                const finalText = lines.join(' ').trim();
 
                 if (data.isFinal || data.speechFinal) {
                     let newText = data.transcript;
                     if (!/[.!?]$/.test(newText)) {
                         newText += '.';
                     }
-                    return finalText ? `${finalText}\n${newText}` : newText;  // Added \n
+                    return finalText ? `${finalText} ${newText}` : newText;
                 }
                 
                 return finalText ? `${finalText}\n[interim] ${data.transcript}` : `[interim] ${data.transcript}`;
@@ -41,15 +41,13 @@ function App() {
             console.log('Received translation:', data);
             setTranscription(prev => {
                 const lines = prev.split('\n').filter(line => !line.startsWith('[interim]'));
-                const finalText = lines.join('\n').trim();  // Changed to \n
+                const finalText = lines.join(' ').trim();
 
                 if (data.isFinal) {
-                    const translation = `    ${data.translation}`;  // Added indentation
-                    return finalText ? `${finalText}\n${translation}` : translation;  // Added \n
+                    return finalText ? `${finalText} ${data.translation}` : data.translation;
                 }
                 
-                const interimTranslation = `    [interim] ${data.translation}`;  // Added indentation
-                return finalText ? `${finalText}\n${interimTranslation}` : interimTranslation;
+                return finalText ? `${finalText}\n[interim] ${data.translation}` : `[interim] ${data.translation}`;
             });
         });
 
